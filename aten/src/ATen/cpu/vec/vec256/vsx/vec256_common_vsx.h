@@ -18,6 +18,7 @@
 #include <ATen/cpu/vec/vec256/vsx/vec256_complex_float_vsx.h>
 
 #include <ATen/cpu/vec/vec256/vsx/vec256_bfloat16_vsx.h>
+#include <ATen/cpu/vec/vec256/vsx/vec256_half_vsx.h>
 #include <ATen/cpu/vec/vec256/vsx/vec256_mask_vsx.h>
 
 namespace at {
@@ -130,6 +131,24 @@ inline void convert(const int64_t* src, double* dst, int64_t n) {
     dst[i] = static_cast<double>(src[i]);
   }
 }
+#if defined(__POWER9_VECTOR__)
+inline std::tuple<Vectorized<float>, Vectorized<float>> convert_half_float(
+    const Vectorized<Half>& a) {
+  vfloat32 f0l, f0h, f1l, f1h;
+  Vectorized<Half>::fp16_to_fp32(a.vec0(), f0l, f0h);
+  Vectorized<Half>::fp16_to_fp32(a.vec1(), f1l, f1h);
+  return std::make_tuple(
+      Vectorized<float>(f0l, f0h), Vectorized<float>(f1l, f1h));
+}
+
+inline Vectorized<Half> convert_float_half(
+    const Vectorized<float>& a,
+    const Vectorized<float>& b) {
+  return Vectorized<Half>(
+      Vectorized<Half>::fp32_to_fp16(a.vec0(), a.vec1()),
+      Vectorized<Half>::fp32_to_fp16(b.vec0(), b.vec1()));
+}
+#else
 // Generic implementation to fix compiler error
 // TO-DO : Add optimized version for ppc64
 inline std::tuple<Vectorized<float>, Vectorized<float>> convert_half_float(
@@ -155,6 +174,7 @@ inline Vectorized<Half> convert_float_half(
   convert(arr, arr2, K);
   return Vectorized<Half>::loadu(arr2);
 };
+#endif
 
 template <>
 std::pair<Vectorized<double>, Vectorized<double>> inline interleave2<double>(
