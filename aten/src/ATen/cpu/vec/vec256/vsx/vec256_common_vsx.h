@@ -18,7 +18,9 @@
 #include <ATen/cpu/vec/vec256/vsx/vec256_complex_float_vsx.h>
 
 #include <ATen/cpu/vec/vec256/vsx/vec256_bfloat16_vsx.h>
+#if defined(__POWER9_VECTOR__)
 #include <ATen/cpu/vec/vec256/vsx/vec256_half_vsx.h>
+#endif
 #include <ATen/cpu/vec/vec256/vsx/vec256_mask_vsx.h>
 
 namespace at {

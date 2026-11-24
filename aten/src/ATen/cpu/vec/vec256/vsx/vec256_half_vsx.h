@@ -4,7 +4,6 @@
 #include <ATen/cpu/vec/vec256/vsx/vsx_helpers.h>
 #include <ATen/cpu/vec/vec_base.h>
 #include <c10/util/Half.h>
-#include <c10/util/irange.h>
 
 namespace at {
 namespace vec {
@@ -329,15 +328,14 @@ class Vectorized<c10::Half> {
   c10::Half& operator[](int idx) = delete;
 
   int zero_mask() const {
-    __at_align__ c10::Half tmp[size()];
-    store(tmp);
-    int mask = 0;
-    for (int i = 0; i < size(); ++i) {
-      if (tmp[i] == c10::Half(0)) {
-        mask |= (1 << i);
-      }
-    }
-    return mask;
+    // vec_vbpermq gathers the sign bit of each 16-bit compare result into the
+    // top byte of the low doubleword (see vec256_float_vsx.h zero_mask).
+    const vuint8 mask_zero_bits_16 = vuint8{
+        128, 128, 128, 128, 128, 128, 128, 128, 112, 96, 80, 64, 48, 32, 16, 0};
+    auto cmp = (*this == Vectorized<c10::Half>(c10::Half(0)));
+    vuint64 result0 = vec_vbpermq((vuint8)cmp._vecb0, mask_zero_bits_16);
+    vuint64 result1 = vec_vbpermq((vuint8)cmp._vecb1, mask_zero_bits_16);
+    return (result0[1] >> 8) | result1[1];
   }
 
   Vectorized<c10::Half> isnan() const {
@@ -347,14 +345,10 @@ class Vectorized<c10::Half> {
   }
 
   bool has_inf_nan() const {
-    __at_align__ c10::Half tmp[size()];
-    store(tmp);
-    for (const auto i : c10::irange(size())) {
-      if (_isnan(tmp[i]) || _isinf(tmp[i])) {
-        return true;
-      }
-    }
-    return false;
+    // inf and NaN are exactly the fp16 values with all exponent bits set.
+    const vint16 exp_mask = vec_splats((int16_t)0x7C00);
+    return vec_any_eq(vec_and(_vec0, exp_mask), exp_mask) ||
+        vec_any_eq(vec_and(_vec1, exp_mask), exp_mask);
   }
 
   Vectorized<c10::Half> angle() const {
@@ -378,6 +372,15 @@ class Vectorized<c10::Half> {
     // Flip the sign bit (bit 15) of each fp16 lane.
     const vint16 sign_mask = vec_splats((int16_t)0x8000);
     return {vec_xor(_vec0, sign_mask), vec_xor(_vec1, sign_mask)};
+  }
+
+  Vectorized<c10::Half> C10_ALWAYS_INLINE
+  copysign(const Vectorized<c10::Half>& sign) const {
+    // Take the sign bit from `sign` and the remaining bits from *this.
+    const vuint16 sign_mask = vec_splats((uint16_t)0x8000);
+    return {
+        vec_sel(_vec0, sign._vec0, sign_mask),
+        vec_sel(_vec1, sign._vec1, sign_mask)};
   }
 
   // Non-sleef float ops: widen to fp32 with hardware instructions, apply VSX
@@ -459,7 +462,6 @@ class Vectorized<c10::Half> {
   VSX_HALF_UNARY(atan)
   VSX_HALF_UNARY(atanh)
   VSX_HALF_BINARY(atan2, b)
-  VSX_HALF_BINARY(copysign, sign)
   VSX_HALF_UNARY(erf)
   VSX_HALF_UNARY(erfc)
   VSX_HALF_UNARY(erfinv)
